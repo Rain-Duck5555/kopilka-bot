@@ -148,3 +148,115 @@ async def parse_transaction(text: str) -> dict | None:
     except Exception as e:
         logger.error(f"❌ Ошибка {LLM_PROVIDER}: {e}")
         return None
+
+INSIGHTS_PROMPT = """Ты — финансовый советник. На вход получаешь данные о тратах пользователя за текущий месяц и сравниваешь с прошлым.
+
+Твоя задача: дать 3-4 кратких полезных инсайта на русском.
+
+Формат ответа (ТОЛЬКО JSON, без markdown):
+{
+  "insights": [
+    {"emoji": "📈", "text": "краткий инсайт на 1-2 строки"},
+    {"emoji": "🔥", "text": "второй инсайт"},
+    {"emoji": "💡", "text": "третий инсайт"}
+  ]
+}
+
+Правила:
+- Пиши дружелюбно, на «ты», без нравоучений
+- Используй конкретные цифры и проценты из данных
+- Если что-то необычно (траты растут/падают, топ категория изменилась) — выдели это
+- Если данных мало (меньше 3 транзакций) — дай 1-2 общих совета по экономии
+- Максимум 4 инсайта
+- Всегда отвечай ТОЛЬКО валидным JSON
+
+Примеры инсайтов:
+"📈 Расходы выросли на 40% к прошлому месяцу — стоит присмотреться"
+"🍔 Еда — твоя главная категория, 12 000₽ за месяц (45% всех расходов)"
+"📅 Больше всего тратишь в пятницу — 3 500₽"
+"💰 Доходы покрывают расходы на 80% — есть запас"
+"""
+
+
+async def generate_insights(summary: dict) -> list[dict] | None:
+    """Генерирует ИИ-инсайты на основе данных юзера."""
+    import json as _json
+
+    if not summary.get("current"):
+        return None
+
+    # Формируем человекочитаемый ввод для ИИ
+    cur = summary["current"]
+    prev = summary["prev"]
+    top_cats = summary.get("top_categories", [])
+    top_weekday = summary.get("top_weekday")
+
+    weekday_names = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+
+    data_text = f"""
+Данные пользователя за текущий месяц:
+- Доходы: {cur.get('income', 0)}₽
+- Расходы: {cur.get('expense', 0)}₽
+- Количество операций: {cur.get('total_count', 0)}
+
+Данные за прошлый месяц:
+- Доходы: {prev.get('income', 0)}₽
+- Расходы: {prev.get('expense', 0)}₽
+
+Топ-5 категорий расходов текущего месяца:
+"""
+
+    for cat in top_cats:
+        data_text += f"- {cat.get('category_emoji', '')} {cat.get('category_name', '—')}: {cat.get('total', 0)}₽ ({cat.get('cnt', 0)} операций)\n"
+
+    if top_weekday:
+        wd = weekday_names[top_weekday.get("weekday", 0)]
+        data_text += f"\nСамый дорогой день недели: {wd} ({top_weekday.get('total', 0)}₽)\n"
+
+    try:
+        if LLM_PROVIDER == "gemini":
+            # Используем retry-логику
+            raw = await _generate_with_gemini(INSIGHTS_PROMPT, data_text)
+        else:
+            return None
+
+        raw = _clean_json(raw)
+        logger.info(f"🤖 Инсайты: {raw}")
+
+        data = _json.loads(raw)
+        return data.get("insights", [])
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации инсайтов: {e}")
+        return None
+
+
+async def _generate_with_gemini(system_prompt: str, user_content: str) -> str:
+    """Универсальный вызов Gemini с retry."""
+    import asyncio
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = await gemini_client.aio.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=user_content,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.7,
+                ),
+            )
+            return response.text
+        except Exception as e:
+            last_error = e
+            error_str = str(e)
+
+            if "503" in error_str or "UNAVAILABLE" in error_str:
+                wait = 2 ** attempt
+                logger.warning(f"⚠️ Gemini перегружен (инсайты), попытка {attempt + 1}/3, жду {wait} сек...")
+                await asyncio.sleep(wait)
+                continue
+
+            raise
+
+    raise last_error

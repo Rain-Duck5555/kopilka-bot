@@ -9,7 +9,7 @@ from aiogram.types import Message
 
 from config import BOT_TOKEN
 from database.db import init_db, get_user, create_user
-from handlers import menu, add_transaction, analytics, text_input
+from handlers import menu, add_transaction, analytics, text_input, insights
 from utils.keyboards import main_menu_kb
 
 logging.basicConfig(
@@ -24,10 +24,10 @@ bot = Bot(
 )
 dp = Dispatcher()
 
-# Подключаем роутеры
 dp.include_router(menu.router)
 dp.include_router(add_transaction.router)
 dp.include_router(analytics.router)
+dp.include_router(insights.router)
 dp.include_router(text_input.router)  # ВАЖНО: последним!
 
 @dp.message(CommandStart())

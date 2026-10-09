@@ -250,3 +250,83 @@ async def get_last_month_stats(user_id: int, type_: str):
         )
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+async def get_user_summary_for_insights(user_id: int):
+    """Собирает все данные для ИИ-инсайтов."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Данные за текущий месяц
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN type = 'income' THEN amount END), 0) AS income,
+                COALESCE(SUM(CASE WHEN type = 'expense' THEN amount END), 0) AS expense,
+                COUNT(*) AS total_count
+            FROM transactions
+            WHERE user_id = ?
+              AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
+            """,
+            (user_id,),
+        )
+        current = await cursor.fetchone()
+
+        # Данные за прошлый месяц
+        cursor = await db.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN type = 'income' THEN amount END), 0) AS income,
+                COALESCE(SUM(CASE WHEN type = 'expense' THEN amount END), 0) AS expense
+            FROM transactions
+            WHERE user_id = ?
+              AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')
+            """,
+            (user_id,),
+        )
+        prev = await cursor.fetchone()
+
+        # Топ-5 категорий расходов за текущий месяц
+        cursor = await db.execute(
+            """
+            SELECT
+                c.name AS category_name,
+                c.emoji AS category_emoji,
+                COALESCE(SUM(t.amount), 0) AS total,
+                COUNT(*) AS cnt
+            FROM transactions t
+            LEFT JOIN categories c ON t.category_id = c.id
+            WHERE t.user_id = ?
+              AND t.type = 'expense'
+              AND strftime('%Y-%m', t.created_at) = strftime('%Y-%m', 'now')
+            GROUP BY t.category_id
+            ORDER BY total DESC
+            LIMIT 5
+            """,
+            (user_id,),
+        )
+        top_categories = await cursor.fetchall()
+
+        # Самый дорогой день недели
+        cursor = await db.execute(
+            """
+            SELECT
+                CAST(strftime('%w', created_at) AS INTEGER) AS weekday,
+                SUM(amount) AS total
+            FROM transactions
+            WHERE user_id = ?
+              AND type = 'expense'
+              AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
+            GROUP BY weekday
+            ORDER BY total DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        top_weekday = await cursor.fetchone()
+
+        return {
+            "current": dict(current) if current else {},
+            "prev": dict(prev) if prev else {},
+            "top_categories": [dict(c) for c in top_categories],
+            "top_weekday": dict(top_weekday) if top_weekday else None,
+        }
