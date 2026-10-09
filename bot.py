@@ -8,8 +8,8 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 from config import BOT_TOKEN
-from database.db import init_db, get_user, create_user
-from handlers import menu, add_transaction, analytics, text_input, insights
+from database.db import init_db, migrate_db, get_user, create_user
+from handlers import menu, add_transaction, analytics, text_input, insights, subscription
 from utils.keyboards import main_menu_kb
 
 logging.basicConfig(
@@ -28,6 +28,7 @@ dp.include_router(menu.router)
 dp.include_router(add_transaction.router)
 dp.include_router(analytics.router)
 dp.include_router(insights.router)
+dp.include_router(subscription.router)
 dp.include_router(text_input.router)  # ВАЖНО: последним!
 
 @dp.message(CommandStart())
@@ -56,6 +57,7 @@ async def main():
     logger.info("🚀 Запускаю бота...")
 
     await init_db()
+    await migrate_db()  # ← добавляем миграцию
 
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)

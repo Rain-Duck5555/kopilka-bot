@@ -330,3 +330,156 @@ async def get_user_summary_for_insights(user_id: int):
             "top_categories": [dict(c) for c in top_categories],
             "top_weekday": dict(top_weekday) if top_weekday else None,
         }
+
+async def migrate_db():
+    """Добавляет новые поля в существующие таблицы (безопасно)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Проверяем, какие поля уже есть в users
+        cursor = await db.execute("PRAGMA table_info(users)")
+        columns = [row[1] for row in await cursor.fetchall()]
+
+        # Добавляем недостающие поля
+        if "is_pro" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN is_pro INTEGER DEFAULT 0")
+            print("✅ Добавлено поле: is_pro")
+
+        if "pro_until" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN pro_until TIMESTAMP")
+            print("✅ Добавлено поле: pro_until")
+
+        if "operations_this_month" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN operations_this_month INTEGER DEFAULT 0")
+            print("✅ Добавлено поле: operations_this_month")
+
+        if "operations_reset_at" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN operations_reset_at TIMESTAMP")
+            print("✅ Добавлено поле: operations_reset_at")
+
+        await db.commit()
+        print("✅ Миграция БД завершена")
+
+from datetime import datetime, timedelta
+
+
+async def check_pro_status(user_id: int) -> bool:
+    """Проверяет, активна ли Pro-подписка у юзера."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT is_pro, pro_until FROM users WHERE telegram_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return False
+
+        is_pro = row[0]
+        pro_until = row[1]
+
+        if not is_pro or not pro_until:
+            return False
+
+        # Проверяем, не истёк ли срок
+        try:
+            pro_until_dt = datetime.fromisoformat(pro_until)
+            if pro_until_dt < datetime.now():
+                # Подписка истекла — сбрасываем
+                await db.execute(
+                    "UPDATE users SET is_pro = 0, pro_until = NULL WHERE telegram_id = ?",
+                    (user_id,),
+                )
+                await db.commit()
+                return False
+            return True
+        except (ValueError, TypeError):
+            return False
+
+
+async def can_add_transaction(user_id: int, limit: int = 50) -> tuple[bool, int]:
+    """
+    Проверяет, может ли юзер добавить операцию.
+    Возвращает (можно_ли, осталось_операций).
+    """
+    # Pro-юзеры без лимита
+    if await check_pro_status(user_id):
+        return True, 999999
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT operations_this_month, operations_reset_at FROM users WHERE telegram_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return False, 0
+
+        operations = row[0] or 0
+        reset_at = row[1]
+
+        # Проверяем, надо ли сбросить счётчик (новый месяц)
+        now = datetime.now()
+        if not reset_at:
+            # Первый раз — ставим дату сброса
+            await db.execute(
+                "UPDATE users SET operations_reset_at = ? WHERE telegram_id = ?",
+                (now.isoformat(), user_id),
+            )
+            await db.commit()
+        else:
+            try:
+                reset_dt = datetime.fromisoformat(reset_at)
+                # Если с даты сброса прошёл месяц или больше — сбрасываем
+                if (now - reset_dt).days >= 30:
+                    await db.execute(
+                        "UPDATE users SET operations_this_month = 0, operations_reset_at = ? WHERE telegram_id = ?",
+                        (now.isoformat(), user_id),
+                    )
+                    await db.commit()
+                    operations = 0
+            except (ValueError, TypeError):
+                pass
+
+        remaining = max(0, limit - operations)
+        return operations < limit, remaining
+
+
+async def increment_operations(user_id: int):
+    """Увеличивает счётчик операций на 1."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET operations_this_month = COALESCE(operations_this_month, 0) + 1 WHERE telegram_id = ?",
+            (user_id,),
+        )
+        await db.commit()
+
+
+async def activate_pro(user_id: int, days: int = 30):
+    """Активирует Pro-подписку на N дней."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Если уже Pro — продлеваем от текущей даты
+        cursor = await db.execute(
+            "SELECT pro_until FROM users WHERE telegram_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+
+        now = datetime.now()
+        if row and row[0]:
+            try:
+                current_until = datetime.fromisoformat(row[0])
+                if current_until > now:
+                    # Продлеваем
+                    new_until = current_until + timedelta(days=days)
+                else:
+                    new_until = now + timedelta(days=days)
+            except (ValueError, TypeError):
+                new_until = now + timedelta(days=days)
+        else:
+            new_until = now + timedelta(days=days)
+
+        await db.execute(
+            "UPDATE users SET is_pro = 1, pro_until = ? WHERE telegram_id = ?",
+            (new_until.isoformat(), user_id),
+        )
+        await db.commit()

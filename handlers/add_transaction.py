@@ -1,4 +1,3 @@
-
 import logging
 
 from aiogram import F, Router
@@ -7,8 +6,12 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 
 from database.db import (
-    get_user, get_categories, get_category_by_name,
+    get_user,
+    get_categories,
+    get_category_by_name,
     add_transaction,
+    can_add_transaction,
+    increment_operations,
 )
 from utils.keyboards import (
     main_menu_kb, categories_kb, cancel_kb, back_to_menu_kb,
@@ -67,6 +70,23 @@ async def process_amount(message: Message, state: FSMContext):
     data = await state.get_data()
     type_ = data["type_"]
 
+    # Проверяем лимит
+    can_add, remaining = await can_add_transaction(message.from_user.id)
+
+    if not can_add:
+        await state.clear()
+        await message.answer(
+            "🔒 <b>Лимит бесплатных операций исчерпан</b>\n\n"
+            "В бесплатном тарифе доступно <b>50 операций в месяц</b>.\n\n"
+            "💎 Оформи <b>Pro-подписку за 299₽/мес</b>, и получишь:\n"
+            "• Неограниченное количество операций\n"
+            "• Аналитику с топ-5 категорий\n"
+            "• ИИ-инсайты по твоим тратам\n\n"
+            "Команда: /subscribe",
+            reply_markup=cancel_kb()
+        )
+        return
+
     await state.update_data(amount=amount)
 
     # Загружаем категории из БД
@@ -98,6 +118,9 @@ async def process_category(callback: CallbackQuery, state: FSMContext):
         category_id=cat_id,
         comment=None,
     )
+
+    # Увеличиваем счётчик операций
+    await increment_operations(callback.from_user.id)
 
     await state.clear()
 

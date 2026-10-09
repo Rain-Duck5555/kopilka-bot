@@ -1,4 +1,3 @@
-
 import logging
 
 from aiogram import Router
@@ -8,6 +7,8 @@ from database.db import (
     get_user,
     add_transaction,
     get_category_by_name,
+    can_add_transaction,
+    increment_operations,
 )
 from services.llm import parse_transaction
 
@@ -52,6 +53,21 @@ async def handle_text(message: Message):
     category_name = data.get("category")
     comment = data.get("comment")
 
+    # Проверяем лимит ПЕРЕД сохранением
+    can_add, remaining = await can_add_transaction(tg_id)
+
+    if not can_add:
+        await message.answer(
+            "🔒 <b>Лимит бесплатных операций исчерпан</b>\n\n"
+            "В бесплатном тарифе доступно <b>50 операций в месяц</b>.\n\n"
+            "💎 Оформи <b>Pro-подписку за 299₽/мес</b>, и получишь:\n"
+            "• Неограниченное количество операций\n"
+            "• Аналитику с топ-5 категорий\n"
+            "• ИИ-инсайты по твоим тратам\n\n"
+            "Команда: /subscribe"
+        )
+        return
+
     # Ищем категорию в БД
     category_id = None
     if category_name and type_:
@@ -61,6 +77,9 @@ async def handle_text(message: Message):
 
     # Сохраняем
     await add_transaction(tg_id, amount, type_, category_id, comment)
+
+    # Увеличиваем счётчик
+    await increment_operations(tg_id)
 
     # Отвечаем
     emoji = "💸" if type_ == "expense" else "💰"
