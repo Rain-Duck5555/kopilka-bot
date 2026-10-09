@@ -9,8 +9,9 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     builder.button(text="➕ Добавить трату", callback_data="add_expense")
     builder.button(text="💰 Добавить доход", callback_data="add_income")
     builder.button(text="📊 Статистика", callback_data="stats")
+    builder.button(text="📈 Аналитика", callback_data="analytics")
     builder.button(text="📜 История", callback_data="history")
-    builder.adjust(2, 2)  # по 2 кнопки в ряд
+    builder.adjust(2, 2, 1)  # 2, 2, 1 кнопка в ряд
     return builder.as_markup()
 
 

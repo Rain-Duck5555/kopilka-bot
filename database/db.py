@@ -210,3 +210,43 @@ async def delete_last_transaction(user_id: int):
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def get_stats_by_category(user_id: int, type_: str = "expense"):
+    """Возвращает суммы по категориям за текущий месяц."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                c.name AS category_name,
+                c.emoji AS category_emoji,
+                COALESCE(SUM(t.amount), 0) AS total
+            FROM transactions t
+            LEFT JOIN categories c ON t.category_id = c.id
+            WHERE t.user_id = ?
+              AND t.type = ?
+              AND strftime('%Y-%m', t.created_at) = strftime('%Y-%m', 'now')
+            GROUP BY t.category_id
+            ORDER BY total DESC
+            """,
+            (user_id, type_),
+        )
+        return await cursor.fetchall()
+
+
+async def get_last_month_stats(user_id: int, type_: str):
+    """Сумма транзакций за прошлый месяц."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT COALESCE(SUM(amount), 0)
+            FROM transactions
+            WHERE user_id = ?
+              AND type = ?
+              AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', '-1 month')
+            """,
+            (user_id, type_),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
