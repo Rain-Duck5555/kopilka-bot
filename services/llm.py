@@ -68,16 +68,40 @@ def _clean_json(raw: str) -> str:
 
 
 async def _parse_with_gemini(text: str) -> str:
-    """Отправляет текст в Gemini через новый SDK."""
-    response = await gemini_client.aio.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=text,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=0.1,
-        ),
-    )
-    return response.text
+    """Отправляет текст в Gemini с повторными попытками при 503."""
+    import asyncio
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = await gemini_client.aio.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=text,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    temperature=0.1,
+                ),
+            )
+            return response.text
+        except Exception as e:
+            last_error = e
+            error_str = str(e)
+
+            # Если это 503 (перегрузка) — ждём и пробуем снова
+            if "503" in error_str or "UNAVAILABLE" in error_str:
+                wait = 2 ** attempt  # 1, 2, 4 секунды
+                logger.warning(
+                    f"⚠️ Gemini перегружен, попытка {attempt + 1}/3, "
+                    f"жду {wait} сек..."
+                )
+                await asyncio.sleep(wait)
+                continue
+
+            # Другие ошибки — сразу выходим
+            raise
+
+    # Если 3 попытки не помогли — бросаем последнюю ошибку
+    raise last_error
 
 
 async def _parse_with_deepseek(text: str) -> str:
