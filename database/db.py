@@ -483,3 +483,115 @@ async def activate_pro(user_id: int, days: int = 30):
             (new_until.isoformat(), user_id),
         )
         await db.commit()
+
+async def migrate_reminders():
+    """Создаёт таблицу reminders если её нет."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                remind_at TIMESTAMP NOT NULL,
+                repeat_type TEXT DEFAULT 'none',
+                is_sent INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.commit()
+        print("✅ Таблица reminders готова")
+
+from datetime import datetime
+
+
+async def add_reminder(user_id: int, text: str, remind_at: str, repeat_type: str = "none"):
+    """Создаёт напоминание."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO reminders (user_id, text, remind_at, repeat_type)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user_id, text, remind_at, repeat_type),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_user_reminders(user_id: int):
+    """Возвращает активные напоминания юзера (отсортированы по времени)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT * FROM reminders
+            WHERE user_id = ?
+              AND is_sent = 0
+            ORDER BY remind_at ASC
+            """,
+            (user_id,),
+        )
+        return await cursor.fetchall()
+
+
+async def count_user_reminders(user_id: int) -> int:
+    """Считает активные напоминания юзера (для лимита)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT COUNT(*) FROM reminders
+            WHERE user_id = ?
+              AND is_sent = 0
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def delete_reminder(reminder_id: int, user_id: int) -> bool:
+    """Удаляет напоминание (только если оно принадлежит юзеру)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM reminders WHERE id = ? AND user_id = ?",
+            (reminder_id, user_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_pending_reminders():
+    """Возвращает напоминания, которые пора отправить (время пришло)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT * FROM reminders
+            WHERE is_sent = 0
+              AND remind_at <= datetime('now')
+            ORDER BY remind_at ASC
+            """,
+        )
+        return await cursor.fetchall()
+
+
+async def mark_reminder_sent(reminder_id: int):
+    """Отмечает напоминание как отправленное."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE reminders SET is_sent = 1 WHERE id = ?",
+            (reminder_id,),
+        )
+        await db.commit()
+
+
+async def reschedule_reminder(reminder_id: int, new_time: str):
+    """Переносит напоминание на новое время (для повторов и «отложить»)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE reminders SET remind_at = ?, is_sent = 0 WHERE id = ?",
+            (new_time, reminder_id),
+        )
+        await db.commit()

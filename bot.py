@@ -8,9 +8,10 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 from config import BOT_TOKEN
-from database.db import init_db, migrate_db, get_user, create_user
-from handlers import menu, add_transaction, analytics, text_input, insights, subscription
+from database.db import init_db, migrate_db, migrate_reminders, get_user, create_user
+from handlers import menu, add_transaction, analytics, text_input, insights, subscription, reminders
 from utils.keyboards import main_menu_kb
+from services.scheduler import scheduler_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,11 +25,13 @@ bot = Bot(
 )
 dp = Dispatcher()
 
+# Подключаем роутеры
 dp.include_router(menu.router)
 dp.include_router(add_transaction.router)
 dp.include_router(analytics.router)
 dp.include_router(insights.router)
 dp.include_router(subscription.router)
+dp.include_router(reminders.router)  # напоминания
 dp.include_router(text_input.router)  # ВАЖНО: последним!
 
 @dp.message(CommandStart())
@@ -57,9 +60,14 @@ async def main():
     logger.info("🚀 Запускаю бота...")
 
     await init_db()
-    await migrate_db()  # ← добавляем миграцию
+    await migrate_db()
+    await migrate_reminders()
 
     await bot.delete_webhook(drop_pending_updates=True)
+
+    # Запускаем планировщик напоминаний как фоновую задачу
+    asyncio.create_task(scheduler_loop(bot))
+
     await dp.start_polling(bot)
 
 

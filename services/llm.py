@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 
 from google import genai
 from google.genai import types
@@ -231,6 +232,7 @@ async def generate_insights(summary: dict) -> list[dict] | None:
         return None
 
 
+
 async def _generate_with_gemini(system_prompt: str, user_content: str) -> str:
     """Универсальный вызов Gemini с retry."""
     import asyncio
@@ -260,3 +262,81 @@ async def _generate_with_gemini(system_prompt: str, user_content: str) -> str:
             raise
 
     raise last_error
+
+REMINDER_PROMPT = """Ты — парсер даты и времени для напоминаний. Пользователь пишет фразу на русском, а ты возвращаешь JSON.
+
+Формат ответа (ТОЛЬКО JSON, без markdown):
+{
+  "datetime": "ISO формат YYYY-MM-DDTHH:MM:SS" или null,
+  "repeat_type": "none" | "daily" | "weekly" | "monthly"
+}
+
+Правила:
+- Определи дату и время напоминания из текста
+- Используй текущее время пользователя как отправную точку для относительных дат («через час», «завтра»)
+- Если время не указано точно (только «завтра») — ставь 09:00
+- Если только «вечером» — 19:00
+- Если только «утром» — 09:00
+- Если только «днём» — 13:00
+- Если только «ночью» — 22:00
+- repeat_type:
+  * "none" — разовое напоминание
+  * "daily" — «каждый день», «ежедневно»
+  * "weekly" — «каждую неделю», «по понедельникам»
+  * "monthly" — «каждый месяц», «каждое 15-е»
+- Если дату нельзя понять — datetime: null
+
+Текущее время: {now}
+
+Примеры:
+"через 10 минут" → {"datetime": "<now + 10 min>", "repeat_type": "none"}
+"завтра в 9:00" → {"datetime": "<tomorrow at 09:00>", "repeat_type": "none"}
+"20 декабря в 16:00" → {"datetime": "2026-12-20T16:00:00", "repeat_type": "none"}
+"каждый день в 8:00" → {"datetime": "<today or tomorrow at 08:00>", "repeat_type": "daily"}
+"каждый понедельник в 10:00" → {"datetime": "<next Monday at 10:00>", "repeat_type": "weekly"}
+"каждое 15-е число в 12:00" → {"datetime": "<next 15th at 12:00>", "repeat_type": "monthly"}
+"непонятно что" → {"datetime": null, "repeat_type": "none"}
+"""
+
+
+async def parse_reminder_time(text: str) -> dict | None:
+    """Парсит дату/время для напоминания через Gemini."""
+    import json as _json
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S (%A)")
+    prompt = REMINDER_PROMPT.replace("{now}", now)
+
+    try:
+        if LLM_PROVIDER == "gemini":
+            raw = await _generate_with_gemini(prompt, text)
+        elif LLM_PROVIDER == "deepseek":
+            # fallback на deepseek — упрощённая логика
+            response = await deepseek_client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": text},
+                ],
+                temperature=0.1,
+                max_tokens=200,
+            )
+            raw = response.choices[0].message.content
+        else:
+            return None
+
+        raw = _clean_json(raw)
+        logger.info(f"🤖 Парсинг времени: {raw}")
+
+        data = _json.loads(raw)
+
+        if not data.get("datetime"):
+            return None
+
+        return data
+
+    except _json.JSONDecodeError as e:
+        logger.error(f"❌ Не смог распарсить JSON времени: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Ошибка парсинга времени: {e}")
+        return None

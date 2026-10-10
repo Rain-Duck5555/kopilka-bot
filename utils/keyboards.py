@@ -12,8 +12,9 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     builder.button(text="📈 Аналитика", callback_data="analytics")
     builder.button(text="💡 Инсайты", callback_data="insights")
     builder.button(text="📜 История", callback_data="history")
+    builder.button(text="🔔 Напоминания", callback_data="reminders")
     builder.button(text="💎 Подписка Pro", callback_data="subscribe")
-    builder.adjust(2, 2, 2, 1)
+    builder.adjust(2, 2, 2, 2)
     return builder.as_markup()
 
 
