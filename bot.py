@@ -44,7 +44,7 @@ async def cmd_start(message: Message):
         logger.info(f"🆕 Новый юзер: {tg_id} ({first_name})")
         greeting = (
             f"Добро пожаловать, {first_name}! 🎉\n\n"
-            f"Я — <b>Копилка</b>, твой умный финансовый помощник.\n\n"
+            f"Я — <b>RAZLO</b>, твой умный финансовый помощник.\n\n"
             f"Записывай траты и доходы, следи за балансом."
         )
     else:

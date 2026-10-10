@@ -24,7 +24,7 @@ PRO_DAYS = 30
 def subscription_text() -> str:
     """Текст экрана подписки."""
     return (
-        "💎 <b>Копилка Pro</b>\n\n"
+        "💎 <b>RAZLO Pro</b>\n\n"
         "Разблокируй все возможности:\n\n"
         "✅ <b>Безлимитные операции</b>\n"
         "   (в Free — 50 в месяц)\n\n"
@@ -78,12 +78,12 @@ def subscription_keyboard():
 async def cb_buy_pro(callback: CallbackQuery):
     """Создаём счёт на оплату."""
     await callback.message.answer_invoice(
-        title="Копилка Pro",
+        title="RAZLO Pro",
         description=f"Доступ к Pro-функциям на {PRO_DAYS} дней",
         payload=f"pro_subscription_{PRO_DAYS}d",
         currency="XTR",  # Telegram Stars
         prices=[
-            LabeledPrice(label="Копилка Pro", amount=PRO_PRICE_STARS),
+            LabeledPrice(label="RAZLO Pro", amount=PRO_PRICE_STARS),
         ],
     )
     await callback.answer()
